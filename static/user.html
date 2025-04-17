@@ -1,0 +1,175 @@
+<!-- user.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>User Dashboard</title>
+  <!-- Prevent caching so Back always reloads and checks auth -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma"        content="no-cache" />
+  <meta http-equiv="Expires"       content="0" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .container { max-width: 600px; margin: auto; }
+    .collection-section { margin-top: 1em; }
+    .url-item { margin-bottom: 0.5em; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <button id="logoutBtn">Logout</button>
+  </nav>
+
+  <div class="container">
+    <h1>Your Collections</h1>
+    <button id="newColl">+ New Collection</button>
+    <ul id="collList"></ul>
+
+    <dialog id="dlg">
+      <form id="dlgForm">
+        <h2>Create a New Collection</h2>
+        <label>
+          Title:
+          <input name="title" placeholder="Collection Title" required>
+        </label>
+        <label>
+          Choose Model:
+          <select name="model_id" id="modelSelect"></select>
+        </label>
+        <label>
+          URLs ZIP:
+          <input type="file" name="urls_zip" accept=".zip" required>
+        </label>
+        <button type="submit">Create &amp; Classify</button>
+        <button type="button" onclick="dlg.close()">Cancel</button>
+      </form>
+    </dialog>
+
+    <div id="results"></div>
+  </div>
+
+  <script>
+    const API = 'http://127.0.0.1:8000';
+    const token = localStorage.getItem('token');
+    if (!token) window.location.replace('login.html');
+
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('token');
+      window.location.replace('login.html');
+    });
+
+    async function loggedFetch(url, opts = {}) {
+      const method = opts.method || 'GET';
+      console.log(`[Fetch ▶️ ${method}]`, url, opts);
+      const start = performance.now();
+      const res = await fetch(url, opts);
+      console.log(`[Fetch ⬅️ ${method}] ${res.status} (${(performance.now() - start).toFixed(1)}ms)`);
+      return res;
+    }
+
+    let activeCollectionId = null;
+
+    async function loadColls() {
+      const res = await loggedFetch(`${API}/collections`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      const cols = await res.json();
+      const ul = document.getElementById('collList');
+      ul.innerHTML = '';
+      cols.forEach(c => {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = '#';
+        a.textContent = c.title;
+        a.onclick = () => toggleCollection(c.id, c.title);
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+    }
+
+    async function toggleCollection(id, title) {
+      // Close existing
+      if (activeCollectionId !== null) {
+        const old = document.getElementById(`col-${activeCollectionId}`);
+        if (old) old.remove();
+        if (activeCollectionId === id) { 
+          activeCollectionId = null;
+          return;
+        }
+      }
+      activeCollectionId = id;
+
+      const container = document.getElementById('results');
+      const sec = document.createElement('section');
+      sec.id = `col-${id}`;
+      sec.className = 'collection-section';
+      sec.innerHTML = `<h2>${title}</h2><div class="items-${id}">Loading…</div>`;
+      container.appendChild(sec);
+
+      const r2 = await loggedFetch(`${API}/collections/${id}`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      const data = await r2.json();
+      const listDiv = sec.querySelector(`.items-${id}`);
+      listDiv.innerHTML = '';
+      data.items.forEach(i => {
+        const div = document.createElement('div');
+        div.className = 'url-item';
+        div.innerHTML = `<strong>${i.url}</strong><br>${i.pred} (${i.score.toFixed(2)})`;
+        listDiv.appendChild(div);
+      });
+    }
+
+    async function loadModels() {
+      const res = await loggedFetch(`${API}/models`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      const ms = await res.json();
+      const sel = document.getElementById('modelSelect');
+      sel.innerHTML = '';
+      ms.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        sel.appendChild(opt);
+      });
+    }
+
+    document.getElementById('newColl').onclick = async () => {
+      await loadModels();
+      document.getElementById('dlg').showModal();
+    };
+
+    document.getElementById('dlgForm').onsubmit = async e => {
+      e.preventDefault();
+      const form = e.target;
+      // 1) Create collection
+      const r1 = await loggedFetch(`${API}/collections`, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          title: form.title.value,
+          model_id: form.model_id.value
+        })
+      });
+      const coll = await r1.json();
+      // 2) Classify URLs
+      const fd = new FormData();
+      fd.append('file', form.urls_zip.files[0]);
+      await loggedFetch(`${API}/collections/${coll.id}/predict`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token },
+        body: fd
+      });
+      document.getElementById('dlg').close();
+      loadColls();
+    };
+
+    // Initial load
+    loadColls();
+  </script>
+</body>
+</html>
