@@ -37,6 +37,10 @@ from .processor import (
     get_model,
 )
 from .database import SessionLocal, engine
+from .deep_one_class import DeepOneClassClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.svm import OneClassSVM 
+from eif import iForest as ExtendedIsolationForest
 
 # ─── Logging Configuration ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -141,10 +145,28 @@ def _do_training(
         Xf = normalize_vectors(Xr)
         logger.info(f"[JOB {job_id}] data prepared: shape {Xf.shape}")
 
-        # Train model
-        model = get_model(classifier)
-        model.fit(Xf)
-        logger.info(f"[JOB {job_id}] model fitted")
+        if classifier == "deep_one_class":
+            logger.info(f"[JOB {job_id}] Processing {len(texts)} texts for DeepOneClassClassifier")
+            X_temp = X.toarray()
+            input_dim = X_temp.shape[1]
+            model = DeepOneClassClassifier(input_dim=input_dim, latent_dim=16, epochs=20, batch_size=32)
+            model.fit(X_temp)
+            logger.info(f"[JOB {job_id}] DeepOneClassClassifier trained successfully")
+            training_scores = model.decision_function(X_temp)
+
+        elif classifier == "eif":
+            logger.info(f"[JOB {job_id}] Training Extended Isolation Forest")
+            model = ExtendedIsolationForest(ntrees=50, sample_size=256, random_seed=42)
+            model.fit(Xf)
+            logger.info(f"[JOB {job_id}] Extended Isolation Forest trained successfully")
+            threshold = None  # Skip threshold calculation for EIF
+
+        else:
+            model = get_model(classifier)
+            model.fit(Xf)
+            training_scores = model.decision_function(Xf)
+
+        logger.info(f"[JOB {job_id}] {classifier} trained successfully")
 
         # Serialize
         os.makedirs("saved_models", exist_ok=True)
@@ -155,7 +177,8 @@ def _do_training(
                 "vect": vect,
                 "svd": svd,
                 "top_terms": top_terms,
-                "threshold": (model.decision_function(Xf).mean() - 6 * model.decision_function(Xf).std()),
+                "threshold": (model.decision_function(Xf).mean() - 6 * model.decision_function(Xf).std())
+                if classifier not in ["randomforest", "eif"] else None,
             }, f)
         logger.info(f"[JOB {job_id}] serialized to {fname}")
 
@@ -170,16 +193,16 @@ def _do_training(
         logger.info(f"[JOB {job_id}] TrainedModel id={db_model.id} created")
 
         # Mark job complete
-        job.status     = "completed"
-        job.model_id   = db_model.id
+        job.status = "completed"
+        job.model_id = db_model.id
         job.updated_at = datetime.utcnow()
         db.commit()
 
     except Exception as exc:
         logger.exception(f"[JOB {job_id}] failed")
         job = db.query(TrainingJob).get(job_id)
-        job.status     = "failed"
-        job.error      = str(exc)
+        job.status = "failed"
+        job.error = str(exc)
         job.updated_at = datetime.utcnow()
         db.commit()
     finally:
@@ -282,20 +305,49 @@ async def predict_collection(
     tm = db.query(TrainedModel).filter_by(id=coll.model_id).first()
     with open(tm.file_path, "rb") as f:
         data = pickle.load(f)
-    model, vect, svd, threshold = data["model"], data["vect"], data["svd"], data["threshold"]
-    logger.info(f"[PREDICT] loaded model_id={tm.id!r}")
+    model, vect, svd, threshold = data["model"], data["vect"], data["svd"], data.get("threshold")
+
+    # Log the loaded model and threshold
+    logger.info(f"[PREDICT] loaded model_id={tm.id!r} with threshold={threshold}")
 
     added = 0
     for i, url in enumerate(urls, 1):
         text = scrape_urls([url])[0]
+        if not text.strip():
+            logger.warning(f"[PREDICT] Skipping URL {url} due to empty content")
+            continue
+
         X = vect.transform([text])
         Xr = svd.transform(X)
         Xf = normalize_vectors(Xr)
+
+        if Xf.shape[0] == 0 or Xf.shape[1] == 0:
+            logger.warning(f"[PREDICT] Skipping URL {url} due to empty or malformed Xf")
+            continue
+
         try:
-            score = model.decision_function(Xf)[0]
-        except AttributeError:
-            score = model.score_samples(Xf)[0]
-        pred = "Crisis" if score >= threshold else "Non-Crisis"
+            if isinstance(model, ExtendedIsolationForest):
+                score = model.compute_paths(Xf)[0]  # Use compute_paths for EIF
+                pred = "Crisis" if score > 0.5 else "Non-Crisis"  # Adjust threshold as needed
+            elif hasattr(model, "decision_function"):
+                if threshold is None:
+                    raise ValueError("Threshold not found for decision_function-based model")
+                score = model.decision_function(Xf)[0]
+                pred = "Crisis" if score >= threshold else "Non-Crisis"
+            elif hasattr(model, "score_samples"):
+                if threshold is None:
+                    raise ValueError("Threshold not found for score_samples-based model")
+                score = model.score_samples(Xf)[0]
+                pred = "Crisis" if score >= threshold else "Non-Crisis"
+            else:
+                raise ValueError(f"Unsupported model type: {type(model)}")
+        except Exception as e:
+            logger.exception(f"[PREDICT] Error during prediction for URL {url}: {e}")
+            continue
+
+        reconstruction_error = -score  # Negative because higher error = more anomalous
+        logger.info(f"[PREDICT] URL={url} Reconstruction Error={reconstruction_error:.4f}")
+
         item = CollectionItem(
             collection_id=cid, url=url, prediction=pred, score=float(score)
         )
