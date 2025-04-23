@@ -8,6 +8,7 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import Normalizer
 from sklearn.svm import OneClassSVM
 from sklearn.ensemble import IsolationForest
+from eif import iForest as ExtendedIsolationForest
 
 def extract_urls(zip_path, extract_dir="temp_urls"):
     os.makedirs(extract_dir, exist_ok=True)
@@ -59,5 +60,7 @@ def get_model(model_type='svm'):
         return OneClassSVM(kernel='rbf', gamma='scale', nu=0.3)
     elif model_type == 'iforest':
         return IsolationForest(contamination=0.3, random_state=42)
+    elif model_type == 'eif':
+        return ExtendedIsolationForest(ntrees =50, sample_size=256, random_seed=42)
     else:
         raise ValueError(f"Unknown model: {model_type}")
