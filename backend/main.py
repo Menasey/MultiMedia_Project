@@ -17,8 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from . import models, database, auth
-from .auth import (
+from backend import models, database, auth
+from backend.auth import (
     get_db,
     get_password_hash,
     authenticate_user,
@@ -26,8 +26,8 @@ from .auth import (
     get_current_active_user,
     get_current_active_admin,
 )
-from .models import User, TrainingJob, TrainedModel, Collection, CollectionItem
-from .processor import (
+from backend.models import User, TrainingJob, TrainedModel, Collection, CollectionItem
+from backend.processor import (
     extract_urls,
     scrape_urls,
     encode_texts_with_selected_terms,
@@ -36,7 +36,7 @@ from .processor import (
     normalize_vectors,
     get_model,
 )
-from .database import SessionLocal, engine
+from backend.database import SessionLocal, engine
 from .deep_one_class import DeepOneClassClassifier
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.svm import OneClassSVM 
