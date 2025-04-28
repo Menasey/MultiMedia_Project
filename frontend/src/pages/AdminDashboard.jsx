@@ -132,6 +132,8 @@ function AdminDashboard() {
           >
             <option value="svm">SVM</option>
             <option value="iforest">Isolation Forest</option>
+            <option value="deep_one_class">Deep One Class Classification (Autoencoder)</option>
+            <option value="eif">Extended Isolation Forest</option>
           </select>
 
           <button type="submit" className="button">
