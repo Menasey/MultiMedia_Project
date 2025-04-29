@@ -194,9 +194,15 @@ def score_sample(model, X_sample):
         try:
             return model.score_samples(X_sample)[0]
         except AttributeError:
-            paths = model.compute_paths(X_sample)
-            n_samples = X_sample.shape[0]
-            euler_constant = 0.5772156649
-            c_n = 2 * (np.log(n_samples - 1) + euler_constant) - (2 * (n_samples - 1) / n_samples)
-            anomaly_scores = 2 ** (-paths / c_n)
-            return -anomaly_scores[0]
+            try:
+                if hasattr(X_sample, "toarray"):     
+                    X_sample = X_sample.toarray()
+
+                paths = model.compute_paths(X_sample)
+                n_samples = X_sample.shape[0]
+                euler_constant = 0.5772156649
+                c_n = 2 * (np.log(n_samples - 1) + euler_constant) - (2 * (n_samples - 1) / n_samples)
+                anomaly_scores = 2 ** (-paths / c_n)
+                return -anomaly_scores[0]
+            except Exception as e:
+                raise ValueError(f"Unsupported model type for scoring: {e}")

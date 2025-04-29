@@ -1,6 +1,14 @@
+// UserDashboard.jsx
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getCollections, getModels, createCollection, uploadUrlsToCollection, getCollectionDetails } from '../services/api';
+import {
+  getCollections,
+  getModels,
+  createCollection,
+  uploadUrlsToCollection,
+  getCollectionDetails
+} from '../services/api';
 
 function UserDashboard() {
   const [collections, setCollections] = useState([]);
@@ -9,6 +17,8 @@ function UserDashboard() {
   const [newModelId, setNewModelId] = useState('');
   const [newZip, setNewZip] = useState(null);
   const [activeCollection, setActiveCollection] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('');
   const navigate = useNavigate();
 
   function logout() {
@@ -34,15 +44,43 @@ function UserDashboard() {
   async function handleNewCollection(e) {
     e.preventDefault();
     if (!newZip) return;
-    const coll = await createCollection(newTitle, newModelId);
-    await uploadUrlsToCollection(coll.id, newZip);
-    await loadCollections();
+    setActiveCollection(null);
+    setCollections([]);
+    setLoading(true);
+    setStatus('Creating collection and uploading... Please wait.');
+
+    try {
+      const coll = await createCollection(newTitle, newModelId);
+      await uploadUrlsToCollection(coll.id, newZip);
+      await loadCollections();
+      setStatus('✅ Collection created and classified successfully!');
+      setNewTitle('');
+      setNewModelId('');
+      setNewZip(null);
+    } catch (err) {
+      console.error('Error creating collection:', err);
+      setStatus('❌ Failed to create collection.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function openCollection(id) {
     const data = await getCollectionDetails(id);
     setActiveCollection(data);
   }
+
+  function handleViewModelVisualizations() {
+    if (!activeCollection) return;
+    const model = models.find(m => m.id === activeCollection.model_id);
+    if (model) {
+      navigate('/model-eval', { state: { model: model, fromAdmin: false } });
+    } else {
+      alert('Model not found.');
+    }
+  }
+
+  const selectedModel = newModelId ? models.find(m => m.id === parseInt(newModelId)) : null;
 
   return (
     <>
@@ -55,6 +93,7 @@ function UserDashboard() {
 
         <form onSubmit={handleNewCollection} className="form">
           <h2 className="subtitle">Create New Collection</h2>
+          
           <input
             type="text"
             className="input"
@@ -63,6 +102,7 @@ function UserDashboard() {
             onChange={e => setNewTitle(e.target.value)}
             required
           />
+
           <select
             className="input"
             value={newModelId}
@@ -71,9 +111,19 @@ function UserDashboard() {
           >
             <option value="">Select Model</option>
             {models.map(m => (
-              <option key={m.id} value={m.id}>{m.name}</option>
+              <option key={m.id} value={m.id}>
+                {m.name} ({m.classifier})
+              </option>
             ))}
           </select>
+
+          {/* 👇 Show selected model description if selected */}
+          {selectedModel && (
+            <div style={{ marginBottom: '1rem', marginTop: '0.5rem', color: '#374151', fontStyle: 'italic' }}>
+              {selectedModel.description}
+            </div>
+          )}
+
           <input
             type="file"
             accept=".zip"
@@ -81,12 +131,17 @@ function UserDashboard() {
             onChange={e => setNewZip(e.target.files[0])}
             required
           />
+
           <button type="submit" className="button">
             Create and Classify
           </button>
         </form>
 
+        {loading && <div className="spinner" />}
+        {status && <div style={{ marginTop: '1rem', color: '#2563eb' }}>{status}</div>}
+
         <h2 className="subtitle" style={{ marginTop: '2rem' }}>Existing Collections</h2>
+
         <ul className="list">
           {collections.map(c => (
             <li key={c.id} className="collection-item" onClick={() => openCollection(c.id)}>
@@ -98,6 +153,15 @@ function UserDashboard() {
         {activeCollection && (
           <div style={{ marginTop: '2rem' }}>
             <h3 className="subtitle">{activeCollection.title}</h3>
+
+            <button
+              className="button"
+              style={{ marginBottom: '1.5rem' }}
+              onClick={handleViewModelVisualizations}
+            >
+              View Model Visualizations
+            </button>
+
             <ul className="list">
               {activeCollection.items.map((i, idx) => (
                 <li key={idx} className="collection-item">

@@ -18,6 +18,7 @@ class TrainedModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     classifier = Column(String)
+    description = Column(String) 
     file_path = Column(String)
     training_date = Column(DateTime, default=datetime.utcnow)
     eval_score_plot = Column(String, nullable=True)    

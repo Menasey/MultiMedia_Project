@@ -5,13 +5,18 @@ function ModelEvaluation() {
   const location = useLocation();
   const navigate = useNavigate();
   const model = location.state?.model;
+  const fromAdmin = location.state?.fromAdmin ?? true;
 
   if (!model) {
     return (
       <div className="container">
         <h1 className="title">No Model Selected</h1>
-        <button onClick={() => navigate('/admin')} className="button">
-          Back to Admin Dashboard
+        <button
+          onClick={() => navigate(fromAdmin ? '/admin' : '/user')}
+          className="button"
+          style={{ marginTop: '2rem' }}
+        >
+          Back to {fromAdmin ? 'Admin Dashboard' : 'User Dashboard'}
         </button>
       </div>
     );
@@ -43,9 +48,14 @@ function ModelEvaluation() {
         </>
         )}
 
-      <button onClick={() => navigate('/admin')} className="button" style={{ marginTop: '2rem' }}>
-        Back to Admin Dashboard
+      <button
+        onClick={() => navigate(fromAdmin ? '/admin' : '/user')}
+        className="button"
+        style={{ marginTop: '2rem' }}
+      >
+        Back to {fromAdmin ? 'Admin Dashboard' : 'User Dashboard'}
       </button>
+
     </div>
   );
 }

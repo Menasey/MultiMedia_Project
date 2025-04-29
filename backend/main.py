@@ -114,6 +114,7 @@ def list_models(db: Session = Depends(get_db)):
             "id": m.id,
             "name": m.name,
             "classifier": m.classifier,
+            "description": m.description, 
             "training_date": m.training_date,
             "eval_score_plot": m.eval_score_plot,
             "eval_terms_plot": m.eval_terms_plot,
@@ -341,4 +342,9 @@ def get_collection(
         {"url": it.url, "pred": it.prediction, "score": it.score}
         for it in coll.items
     ]
-    return {"id": coll.id, "title": coll.title, "items": items}
+    return {
+        "id": coll.id,
+        "title": coll.title,
+        "model_id": coll.model_id,  
+        "items": items,
+    }
