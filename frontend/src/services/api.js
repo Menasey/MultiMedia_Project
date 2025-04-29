@@ -41,9 +41,14 @@ export async function registerUser({ username, email, password, is_admin }) {
 
 // === Models (Admin side) ===
 export async function getModels() {
-  const response = await authAxios.get('/models');
-  return response.data; // list of models
-}
+    const response = await authAxios.get('/models');
+    return response.data.map(model => ({
+      ...model,
+      eval_score_plot: model.eval_score_plot ? `http://127.0.0.1:8000/${model.eval_score_plot}` : null,
+      eval_terms_plot: model.eval_terms_plot ? `http://127.0.0.1:8000/${model.eval_terms_plot}` : null,
+      eval_fold_plot: model.eval_fold_plot ? `http://127.0.0.1:8000/${model.eval_fold_plot}` : null,
+    }));
+  }
 
 export async function trainModel(zipFile, modelName, classifier = 'svm', description) {
   const formData = new FormData();

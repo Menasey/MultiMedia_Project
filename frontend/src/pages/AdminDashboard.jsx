@@ -132,6 +132,8 @@ function AdminDashboard() {
           >
             <option value="svm">SVM</option>
             <option value="iforest">Isolation Forest</option>
+            <option value="deep_one_class">Deep One Class Classification (Autoencoder)</option>
+            <option value="eif">Extended Isolation Forest</option>
           </select>
 
           <button type="submit" className="button">
@@ -144,11 +146,27 @@ function AdminDashboard() {
 
         <h2 className="subtitle" style={{ marginTop: '2rem' }}>Trained Models</h2>
         <ul className="list">
-          {models.map(m => (
+        {models.map(m => (
             <li key={m.id} className="collection-item">
-              <strong>{m.name}</strong> ({m.classifier}) — Trained at {new Date(m.training_date).toLocaleString()}
+            <strong>{m.name}</strong> ({m.classifier}) — Trained at {new Date(m.training_date).toLocaleString()}
+            <br />
+            {m.eval_score_plot && (
+                <div style={{ marginTop: '1rem' }}>
+                <img src={m.eval_score_plot} alt="Decision Score Distribution" style={{ width: '100%', maxWidth: '600px', marginBottom: '1rem' }} />
+                </div>
+            )}
+            {m.eval_terms_plot && (
+                <div>
+                <img src={m.eval_terms_plot} alt="Top TF-IDF Terms" style={{ width: '100%', maxWidth: '600px' }} />
+                </div>
+            )}
+            {m.eval_fold_plot && (
+                <div>
+                <img src={m.eval_fold_plot} alt="Fold Cross-Validation Scores" style={{ width: '100%', maxWidth: '600px', marginTop: '1rem' }} />
+                </div>
+            )}
             </li>
-          ))}
+        ))}
         </ul>
       </div>
     </>

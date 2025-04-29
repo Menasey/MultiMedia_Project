@@ -20,6 +20,9 @@ class TrainedModel(Base):
     classifier = Column(String)
     file_path = Column(String)
     training_date = Column(DateTime, default=datetime.utcnow)
+    eval_score_plot = Column(String, nullable=True)    
+    eval_terms_plot = Column(String, nullable=True)     
+    eval_fold_plot = Column(String, nullable=True)
     collections = relationship("Collection", back_populates="model")
 
 class Collection(Base):
