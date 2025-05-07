@@ -1,0 +1,30 @@
+# === Python ===
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# === FastAPI / backend artifacts ===
+app.db
+*.db
+saved_models/
+fold_scores.png
+
+# === Node / React frontend ===
+node_modules/
+build/
+dist/
+.next/
+.env
+
+# === System files ===
+.DS_Store
+Thumbs.db
+
+# === Static / temp files ===
+static/
+temp_urls/
+
+# === Logs ===
+*.log
