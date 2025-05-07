@@ -1,0 +1,36 @@
+# FastAPI & ASGI server
+fastapi
+uvicorn
+
+# File upload support
+python-multipart
+
+# Authentication
+passlib[bcrypt]
+python-jose[cryptography]
+
+# Database
+sqlalchemy
+
+# Pydantic (for data validation)
+pydantic
+
+# Machine Learning
+scikit-learn
+tensorflow
+
+# Web scraping
+requests
+beautifulsoup4
+
+# Utilities & plotting
+numpy
+pandas
+matplotlib
+joblib
+
+# Async file handling
+aiofiles
+
+# Templating (if used in frontend routes)
+jinja2
