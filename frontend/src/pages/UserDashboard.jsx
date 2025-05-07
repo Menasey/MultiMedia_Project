@@ -1,5 +1,3 @@
-// UserDashboard.jsx
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -7,7 +5,8 @@ import {
   getModels,
   createCollection,
   uploadUrlsToCollection,
-  getCollectionDetails
+  getCollectionDetails,
+  deleteCollection,
 } from '../services/api';
 
 function UserDashboard() {
@@ -16,44 +15,40 @@ function UserDashboard() {
   const [newTitle, setNewTitle] = useState('');
   const [newModelId, setNewModelId] = useState('');
   const [newZip, setNewZip] = useState(null);
-  const [activeCollection, setActiveCollection] = useState(null);
+  const [expanded, setExpanded] = useState({});
+  const [collectionDetails, setCollectionDetails] = useState({});
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const navigate = useNavigate();
-
-  function logout() {
-    localStorage.removeItem('token');
-    navigate('/login');
-  }
-
-  async function loadCollections() {
-    const data = await getCollections();
-    setCollections(data);
-  }
-
-  async function loadModels() {
-    const data = await getModels();
-    setModels(data);
-  }
 
   useEffect(() => {
     loadCollections();
     loadModels();
   }, []);
 
+  async function loadCollections() {
+    const data = await getCollections();
+    setCollections(data);
+    const init = {};
+    data.forEach(c => (init[c.id] = false));
+    setExpanded(init);
+  }
+
+  async function loadModels() {
+    setModels(await getModels());
+  }
+
   async function handleNewCollection(e) {
     e.preventDefault();
     if (!newZip) return;
-    setActiveCollection(null);
-    setCollections([]);
     setLoading(true);
-    setStatus('Creating collection and uploading... Please wait.');
+    setStatus('Creating collection and uploading...');
 
     try {
       const coll = await createCollection(newTitle, newModelId);
       await uploadUrlsToCollection(coll.id, newZip);
       await loadCollections();
-      setStatus('✅ Collection created and classified successfully!');
+      setStatus('✅ Collection created and classified!');
       setNewTitle('');
       setNewModelId('');
       setNewZip(null);
@@ -65,27 +60,46 @@ function UserDashboard() {
     }
   }
 
-  async function openCollection(id) {
-    const data = await getCollectionDetails(id);
-    setActiveCollection(data);
+  async function toggleCollection(id) {
+    if (!expanded[id]) {
+      const data = await getCollectionDetails(id);
+      setCollectionDetails(prev => ({ ...prev, [id]: data }));
+    }
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   }
 
-  function handleViewModelVisualizations() {
-    if (!activeCollection) return;
-    const model = models.find(m => m.id === activeCollection.model_id);
+  async function handleDeleteCollection(id) {
+    if (window.confirm("Delete this collection?")) {
+      await deleteCollection(id);
+      await loadCollections();
+    }
+  }
+
+  function handleViewModelVisualizations(collection) {
+    const model = models.find(m => m.id === collection.model_id);
     if (model) {
-      navigate('/model-eval', { state: { model: model, fromAdmin: false } });
+      navigate('/model-eval', { state: { model, fromAdmin: false } });
     } else {
       alert('Model not found.');
     }
   }
 
-  const selectedModel = newModelId ? models.find(m => m.id === parseInt(newModelId)) : null;
+  function renderPrediction(pred, score) {
+    const isCrisis = pred === 'Crisis';
+
+    return (
+      <span style={{ color: isCrisis ? 'green' : 'red', fontWeight: 'bold' }}>
+        {isCrisis ? 'Crisis Related' : 'Non-Crisis Related'} 
+      </span>
+    );
+  }
 
   return (
     <>
       <div className="navbar">
-        <button onClick={logout} className="logout-button">Logout</button>
+        <button onClick={() => { localStorage.removeItem('token'); navigate('/login'); }} className="logout-button">
+          Logout
+        </button>
       </div>
 
       <div className="container">
@@ -93,7 +107,7 @@ function UserDashboard() {
 
         <form onSubmit={handleNewCollection} className="form">
           <h2 className="subtitle">Create New Collection</h2>
-          
+
           <input
             type="text"
             className="input"
@@ -111,18 +125,9 @@ function UserDashboard() {
           >
             <option value="">Select Model</option>
             {models.map(m => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.classifier})
-              </option>
+              <option key={m.id} value={m.id}>{m.name} ({m.classifier})</option>
             ))}
           </select>
-
-          {/* 👇 Show selected model description if selected */}
-          {selectedModel && (
-            <div style={{ marginBottom: '1rem', marginTop: '0.5rem', color: '#374151', fontStyle: 'italic' }}>
-              {selectedModel.description}
-            </div>
-          )}
 
           <input
             type="file"
@@ -132,9 +137,7 @@ function UserDashboard() {
             required
           />
 
-          <button type="submit" className="button">
-            Create and Classify
-          </button>
+          <button type="submit" className="button">Create and Classify</button>
         </form>
 
         {loading && <div className="spinner" />}
@@ -144,34 +147,54 @@ function UserDashboard() {
 
         <ul className="list">
           {collections.map(c => (
-            <li key={c.id} className="collection-item" onClick={() => openCollection(c.id)}>
-              {c.title}
+            <li key={c.id} className="collection-item">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>{c.title}</strong>
+                <button
+                  onClick={() => handleDeleteCollection(c.id)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    fontSize: '1.2rem',
+                    color: '#e11d48',
+                    cursor: 'pointer',
+                  }}
+                  title="Delete Collection"
+                >
+                  🗑️
+                </button>
+              </div>
+
+              <button className="button" onClick={() => toggleCollection(c.id)} style={{ marginTop: '0.5rem' }}>
+                {expanded[c.id] ? 'Hide Details' : 'Show Details'}
+              </button>
+
+              {expanded[c.id] && collectionDetails[c.id] && (
+                <div style={{ marginTop: '1rem' }}>
+                  <button className="button" onClick={() => handleViewModelVisualizations(collectionDetails[c.id])}>
+                    View Model Visualizations
+                  </button>
+
+                  <ul className="list" style={{ marginTop: '1rem' }}>
+                    {collectionDetails[c.id].items.map((item, idx) => (
+                      <li key={idx} className="collection-item">
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontWeight: 'bold', wordBreak: 'break-all' }}
+                        >
+                          {item.url}
+                        </a>
+                        <div>{renderPrediction(item.pred, item.score)}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </li>
           ))}
         </ul>
-
-        {activeCollection && (
-          <div style={{ marginTop: '2rem' }}>
-            <h3 className="subtitle">{activeCollection.title}</h3>
-
-            <button
-              className="button"
-              style={{ marginBottom: '1.5rem' }}
-              onClick={handleViewModelVisualizations}
-            >
-              View Model Visualizations
-            </button>
-
-            <ul className="list">
-              {activeCollection.items.map((i, idx) => (
-                <li key={idx} className="collection-item">
-                  <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{i.url}</div>
-                  <div>{i.pred} ({i.score.toFixed(2)})</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     </>
   );

@@ -1,12 +1,10 @@
-# backend/evaluation.py
-
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 def evaluate_model(X, y_true, model, threshold, k=5):
     """K-Fold cross-validation for any one-class model."""
-    from backend.processor import DeepOneClassClassifier, ExtendedIsolationForest
+    from backend.processor import DeepOneClassClassifier
     kf = KFold(n_splits=k, shuffle=True, random_state=42)
     results = []
     for train_idx, test_idx in kf.split(X):
@@ -18,12 +16,7 @@ def evaluate_model(X, y_true, model, threshold, k=5):
             X_test = X_test.toarray() if hasattr(X_test, "toarray") else X_test
             model.fit(X_train)
 
-        # CASE 2: Extended Isolation Forest (no refit needed)
-        elif isinstance(model, ExtendedIsolationForest):
-            X_test = X_test.toarray() if hasattr(X_test, "toarray") else X_test
-            pass  # no fit
-
-        # CASE 3: Normal models (SVM, IForest)
+        # CASE 2: SVM
         else:
             model.fit(X_train)
 

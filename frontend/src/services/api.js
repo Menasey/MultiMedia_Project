@@ -41,14 +41,14 @@ export async function registerUser({ username, email, password, is_admin }) {
 
 // === Models (Admin side) ===
 export async function getModels() {
-    const response = await authAxios.get('/models');
-    return response.data.map(model => ({
-      ...model,
-      eval_score_plot: model.eval_score_plot ? `http://127.0.0.1:8000/${model.eval_score_plot}` : null,
-      eval_terms_plot: model.eval_terms_plot ? `http://127.0.0.1:8000/${model.eval_terms_plot}` : null,
-      eval_fold_plot: model.eval_fold_plot ? `http://127.0.0.1:8000/${model.eval_fold_plot}` : null,
-    }));
-  }
+  const response = await authAxios.get('/models');
+  return response.data.map(model => ({
+    ...model,
+    eval_score_plot: model.eval_score_plot ? `${API_URL}/${model.eval_score_plot}` : null,
+    eval_terms_plot: model.eval_terms_plot ? `${API_URL}/${model.eval_terms_plot}` : null,
+    eval_fold_plot: model.eval_fold_plot ? `${API_URL}/${model.eval_fold_plot}` : null,
+  }));
+}
 
 export async function trainModel(zipFile, modelName, classifier = 'svm', description) {
   const formData = new FormData();
@@ -62,9 +62,19 @@ export async function trainModel(zipFile, modelName, classifier = 'svm', descrip
 }
 
 export async function getTrainingJobStatus(jobId) {
-    const res = await authAxios.get(`/training_jobs/${jobId}`);
-    return res.data;
-  }  
+  const res = await authAxios.get(`/training_jobs/${jobId}`);
+  return res.data;
+}
+
+export async function deleteModel(modelId) {
+  const response = await authAxios.delete(`/models/${modelId}`);
+  return response.data; // { detail: "Model deleted successfully" }
+}
+
+export async function deleteAllModels() {
+  const response = await authAxios.delete('/models');
+  return response.data; // { detail: "All models and related data deleted" }
+}
 
 // === Collections (User side) ===
 export async function createCollection(title, modelId) {
@@ -93,3 +103,9 @@ export async function getCollectionDetails(collectionId) {
   const response = await authAxios.get(`/collections/${collectionId}`);
   return response.data; // { id, title, items: [...] }
 }
+
+export async function deleteCollection(collectionId) {
+  const res = await authAxios.delete(`/collections/${collectionId}`);
+  return res.data;
+}
+

@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   getModels,
   trainModel,
-  getTrainingJobStatus
+  getTrainingJobStatus,
+  deleteModel,
+  deleteAllModels
 } from '../services/api';
 
 function AdminDashboard() {
@@ -15,6 +17,7 @@ function AdminDashboard() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [jobId, setJobId] = useState(null);
+  const [visiblePlots, setVisiblePlots] = useState({});
 
   const navigate = useNavigate();
 
@@ -26,21 +29,21 @@ function AdminDashboard() {
   async function loadModels() {
     const data = await getModels();
     setModels(data);
+    const visibility = {};
+    data.forEach(m => (visibility[m.id] = false));
+    setVisiblePlots(visibility);
   }
 
   useEffect(() => {
     loadModels();
   }, []);
 
-  // Polling effect
   useEffect(() => {
     if (!jobId) return;
 
     const interval = setInterval(async () => {
       try {
         const statusData = await getTrainingJobStatus(jobId);
-        console.log('[Polling] Job status:', statusData.status);
-
         if (statusData.status === 'completed') {
           setStatus('✅ Model training complete!');
           setLoading(false);
@@ -57,23 +60,15 @@ function AdminDashboard() {
         console.error('Polling error:', err);
         clearInterval(interval);
       }
-    }, 3000); // every 3s
+    }, 3000);
 
     return () => clearInterval(interval);
   }, [jobId]);
 
   async function handleTrain(e) {
     e.preventDefault();
-    if (!zipFile) {
-      setStatus('❗ Please upload a ZIP file!');
-      return;
-    }
-    if (!modelName) {
-      setStatus('❗ Please enter a model name!');
-      return;
-    }
-    if (!description) {
-      setStatus('❗ Please provide a short description for the model.');
+    if (!zipFile || !modelName || !description) {
+      setStatus('❗ Please fill out all fields and upload a ZIP file.');
       return;
     }
 
@@ -84,10 +79,28 @@ function AdminDashboard() {
       setJobId(job_id);
       setStatus('✅ Training submitted. Waiting for completion...');
     } catch (err) {
-        console.error('Training error:', err); // Add this
-        setStatus('❌ Training failed: ' + (err.response?.data?.detail || err.message || 'Unknown error'));
-        setLoading(false);
-      }
+      console.error('Training error:', err);
+      setStatus('❌ Training failed: ' + (err.response?.data?.detail || err.message || 'Unknown error'));
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteModel(id) {
+    if (window.confirm("Delete this model?")) {
+      await deleteModel(id);
+      await loadModels();
+    }
+  }
+
+  async function handleClearAll() {
+    if (window.confirm("Are you sure you want to delete all models?")) {
+      await deleteAllModels();
+      await loadModels();
+    }
+  }
+
+  function togglePlots(id) {
+    setVisiblePlots(prev => ({ ...prev, [id]: !prev[id] }));
   }
 
   return (
@@ -111,7 +124,7 @@ function AdminDashboard() {
 
           <textarea
             className="input"
-            placeholder="Short model description (e.g., Earthquake-related crisis pages)"
+            placeholder="Short model description"
             value={description}
             onChange={e => setDescription(e.target.value)}
             required
@@ -131,42 +144,79 @@ function AdminDashboard() {
             onChange={e => setClassifier(e.target.value)}
           >
             <option value="svm">SVM</option>
-            <option value="iforest">Isolation Forest</option>
-            <option value="deep_one_class">Deep One Class Classification (Autoencoder)</option>
-            <option value="eif">Extended Isolation Forest</option>
+            <option value="deep_one_class">Deep One Class</option>
           </select>
 
-          <button type="submit" className="button">
-            Train Model
-          </button>
+          <button type="submit" className="button">Train Model</button>
         </form>
 
         {loading && <div className="spinner" />}
         {status && <div style={{ marginTop: '1rem', color: '#2563eb' }}>{status}</div>}
 
         <h2 className="subtitle" style={{ marginTop: '2rem' }}>Trained Models</h2>
+
+        <button className="button danger" onClick={handleClearAll} style={{ marginBottom: '1rem' }}>
+          🗑️ Clear All Models
+        </button>
+
         <ul className="list">
-        {models.map(m => (
+          {models.map(m => (
             <li key={m.id} className="collection-item">
-            <strong>{m.name}</strong> ({m.classifier}) — Trained at {new Date(m.training_date).toLocaleString()}
-            <br />
-            {m.eval_score_plot && (
-                <div style={{ marginTop: '1rem' }}>
-                <img src={m.eval_score_plot} alt="Decision Score Distribution" style={{ width: '100%', maxWidth: '600px', marginBottom: '1rem' }} />
-                </div>
-            )}
-            {m.eval_terms_plot && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                <img src={m.eval_terms_plot} alt="Top TF-IDF Terms" style={{ width: '100%', maxWidth: '600px' }} />
+                  <strong>{m.name}</strong> ({m.classifier})<br />
+                  <small>Trained at {new Date(m.training_date).toLocaleString()}</small>
                 </div>
-            )}
-            {m.eval_fold_plot && (
+                <button
+                  onClick={() => handleDeleteModel(m.id)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    fontSize: '1.2rem',
+                    color: '#e11d48',
+                    cursor: 'pointer'
+                  }}
+                  title="Delete Model"
+                >
+                  🗑️
+                </button>
+              </div>
+
+              <button
+                className="button"
+                onClick={() => togglePlots(m.id)}
+                style={{ marginTop: '0.75rem' }}
+              >
+                {visiblePlots[m.id] ? 'Hide Visualizations' : 'Show Visualizations'}
+              </button>
+
+              {visiblePlots[m.id] && (
                 <div>
-                <img src={m.eval_fold_plot} alt="Fold Cross-Validation Scores" style={{ width: '100%', maxWidth: '600px', marginTop: '1rem' }} />
+                  {m.eval_score_plot && (
+                    <img
+                      src={m.eval_score_plot}
+                      alt="Decision Score Distribution"
+                      style={{ width: '100%', maxWidth: '600px', margin: '1rem 0' }}
+                    />
+                  )}
+                  {m.eval_terms_plot && (
+                    <img
+                      src={m.eval_terms_plot}
+                      alt="Top TF-IDF Terms"
+                      style={{ width: '100%', maxWidth: '600px', marginBottom: '1rem' }}
+                    />
+                  )}
+                  {m.eval_fold_plot && (
+                    <img
+                      src={m.eval_fold_plot}
+                      alt="Fold Scores"
+                      style={{ width: '100%', maxWidth: '600px', marginBottom: '1rem' }}
+                    />
+                  )}
                 </div>
-            )}
+              )}
             </li>
-        ))}
+          ))}
         </ul>
       </div>
     </>
@@ -174,3 +224,4 @@ function AdminDashboard() {
 }
 
 export default AdminDashboard;
+

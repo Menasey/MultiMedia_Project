@@ -1,63 +1,54 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from sklearn.base import BaseEstimator
+from sklearn.preprocessing import Normalizer
 
 class DeepOneClassClassifier(BaseEstimator):
-    def __init__(self, input_dim=None, latent_dim=32, epochs=50, batch_size=32):
+    def __init__(self, input_dim=None, latent_dim=16, epochs=100, batch_size=32):
         """
-        Deep One-Class Classifier using an autoencoder.
-        :param input_dim: Dimension of the input features (can be None initially).
-        :param latent_dim: Dimension of the latent space.
-        :param epochs: Number of training epochs.
-        :param batch_size: Batch size for training.
+        Deep One-Class Classifier using an autoencoder with improved structure.
         """
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.epochs = epochs
         self.batch_size = batch_size
         self.autoencoder = None
+        self.normalizer = Normalizer()
 
     def build_model(self, input_dim=None):
-        """
-        Build the autoencoder model. Rebuilds the model if input_dim changes.
-        :param input_dim: Dimension of the input features (optional).
-        """
         if input_dim is not None:
-            self.input_dim = input_dim  # Update input_dim dynamically
+            self.input_dim = input_dim
 
         if self.input_dim is None:
             raise ValueError("input_dim must be specified to build the model.")
 
-        # Encoder
+        # Encoder with bottleneck
         input_layer = layers.Input(shape=(self.input_dim,))
-        encoded = layers.Dense(128, activation='relu')(input_layer)
-        encoded = layers.Dense(self.latent_dim, activation='relu')(encoded)
+        x = layers.Dense(64, activation='relu')(input_layer)
+        encoded = layers.Dense(self.latent_dim, activation='relu')(x)
 
         # Decoder
-        decoded = layers.Dense(128, activation='relu')(encoded)
-        decoded = layers.Dense(self.input_dim, activation='sigmoid')(decoded)
+        x = layers.Dense(64, activation='relu')(encoded)
+        decoded = layers.Dense(self.input_dim, activation='sigmoid')(x)
 
-        # Autoencoder
-        self.autoencoder = models.Model(input_layer, decoded)
-        self.autoencoder.compile(optimizer='adam', loss='mse')
+        # Autoencoder model
+        self.autoencoder = models.Model(inputs=input_layer, outputs=decoded)
+        self.autoencoder.compile(optimizer='adam', loss='mae')
 
     def fit(self, X):
         """
-        Train the autoencoder on the input data.
-        :param X: Input data (features).
+        Fit the model using normalized inputs.
         """
-        if self.autoencoder is None or self.input_dim != X.shape[1]:
-            self.build_model(input_dim=X.shape[1])  # Dynamically rebuild the model if input_dim changes
-        self.autoencoder.fit(X, X, epochs=self.epochs, batch_size=self.batch_size, verbose=1)
+        X_norm = self.normalizer.fit_transform(X)
+        if self.autoencoder is None or self.input_dim != X_norm.shape[1]:
+            self.build_model(input_dim=X_norm.shape[1])
+        self.autoencoder.fit(X_norm, X_norm, epochs=self.epochs, batch_size=self.batch_size, verbose=1)
 
     def decision_function(self, X):
         """
-        Compute the anomaly score for the input data.
-        :param X: Input data (features).
-        :return: Negative reconstruction error as the anomaly score.
+        Return negative reconstruction error as the anomaly score.
         """
-        if self.autoencoder is None or self.input_dim != X.shape[1]:
-            self.build_model(input_dim=X.shape[1])  # Ensure the model matches the input dimensions
-        reconstructions = self.autoencoder.predict(X)
-        reconstruction_error = tf.reduce_mean(tf.square(X - reconstructions), axis=1)
-        return -reconstruction_error.numpy()  # Negative because higher error = more anomalous
+        X_norm = self.normalizer.transform(X)
+        reconstructions = self.autoencoder.predict(X_norm)
+        errors = tf.reduce_mean(tf.abs(X_norm - reconstructions), axis=1)  # MAE
+        return -errors.numpy()

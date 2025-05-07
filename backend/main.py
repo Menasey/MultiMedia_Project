@@ -1,7 +1,3 @@
-# ==============================================
-#  main.py  —  FastAPI 
-# ==============================================
-
 import os
 import pickle
 import logging
@@ -41,7 +37,7 @@ from backend.visualization import (
     plot_tfidf_term_importance,
     plot_fold_scores
 )
-
+from sqlalchemy.exc import SQLAlchemyError
 from backend.evaluation import evaluate_model  # real evaluation
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -67,9 +63,7 @@ app.add_middleware(
 # 📂 Expose saved_models folder
 app.mount("/saved_models", StaticFiles(directory="saved_models"), name="saved_models")
 
-# ============================================================================
-#  AUTH
-# ============================================================================
+
 
 @app.post("/register")
 def register(
@@ -102,9 +96,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(),
     token = create_access_token({"sub": user.username})
     return {"access_token": token, "token_type": "bearer", "is_admin": user.is_admin}
 
-# ============================================================================
-#  MODEL CATALOGUE
-# ============================================================================
+
 
 @app.get("/models")
 def list_models(db: Session = Depends(get_db)):
@@ -123,9 +115,7 @@ def list_models(db: Session = Depends(get_db)):
         for m in models
     ]
 
-# ============================================================================
-#  BACKGROUND TRAINING TASK
-# ============================================================================
+
 
 def _do_training(
     job_id: int,
@@ -159,17 +149,24 @@ def _do_training(
         X_raw, vectorizer_full, top_terms = build_features_and_vect(texts)
         logger.info(f"[JOB {job_id}] Feature extraction complete")
 
-        top_terms = vectorizer_full.get_feature_names_out()
-        Xf = X_raw
-
-        model, scores = train_one_class_model(classifier, Xf)
+        model, scores = train_one_class_model(
+            classifier,
+            X_raw,
+            nu=0.1,
+            gamma= 'auto',
+            latent_dim=32,
+            epochs=50,
+            batch_size=16,
+        )
         logger.info(f"[JOB {job_id}] Model training complete")
 
-        threshold = compute_threshold(scores)
+        #alpha = 1.5 if classifier == "deep_one_class" else 0.5
+
+        threshold = compute_threshold(scores, alpha=0.5)
         logger.info(f"[JOB {job_id}] Threshold computed: {threshold}")
 
-        y_true = np.ones(Xf.shape[0])
-        results = evaluate_model(Xf, y_true, model, threshold=threshold)
+        y_true = np.ones(X_raw.shape[0])
+        results = evaluate_model(X_raw, y_true, model, threshold=threshold)
         logger.info(f"[JOB {job_id}] Evaluation done")
 
         os.makedirs("saved_models", exist_ok=True)
@@ -187,8 +184,8 @@ def _do_training(
         eval_terms_path = path.replace(".pkl", "_terms.png")
         eval_fold_path = path.replace(".pkl", "_folds.png")
 
-        plot_decision_scores(model, Xf, outpath=eval_score_path)
-        plot_tfidf_term_importance(X_raw, top_terms, outpath=eval_terms_path) 
+        plot_decision_scores(model, X_raw, outpath=eval_score_path)
+        plot_tfidf_term_importance(X_raw, top_terms, outpath=eval_terms_path)
         plot_fold_scores(results, outpath=eval_fold_path)
         logger.info(f"[JOB {job_id}] All plots generated")
 
@@ -214,9 +211,7 @@ def _do_training(
     finally:
         db.close()
 
-# ============================================================================
-#  TRAINING-JOB STATUS
-# ============================================================================
+
 
 @app.post("/models/train", status_code=status.HTTP_202_ACCEPTED)
 async def enqueue_training(
@@ -242,6 +237,51 @@ async def enqueue_training(
         classifier.lower(), model_name
     )
     return {"job_id": job.id}
+
+# DELETE a single model (and its related collections + items)
+@app.delete("/models/{model_id}", status_code=204)
+def delete_model(
+    model_id: int,
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_active_admin)
+):
+    model = db.query(TrainedModel).filter_by(id=model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    try:
+        # Delete all collections using this model (and their items)
+        collections = db.query(Collection).filter_by(model_id=model_id).all()
+        for coll in collections:
+            db.query(CollectionItem).filter_by(collection_id=coll.id).delete()
+            db.delete(coll)
+
+        # Delete the model itself
+        db.delete(model)
+        db.commit()
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
+
+    return {"detail": "Model deleted successfully"}
+
+# DELETE all models (and related collections + items)
+@app.delete("/models", status_code=204)
+def delete_all_models(
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_active_admin)
+):
+    try:
+        db.query(CollectionItem).delete()
+        db.query(Collection).delete()
+        db.query(TrainedModel).delete()
+        db.commit()
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete all models: {e}")
+
+    return {"detail": "All models and related data deleted"}
+
 
 @app.get("/training_jobs/{job_id}")
 def get_job_status(
@@ -306,17 +346,33 @@ async def predict_collection(
     with open(tm.file_path, "rb") as f:
         artefacts = pickle.load(f)
 
-    model, vect, threshold = artefacts["model"], artefacts["vect"], artefacts["threshold"]
+    model = artefacts["model"]
+    vect = artefacts["vect"]
+    threshold = artefacts["threshold"]
 
     added = 0
     for url in urls:
         text = scrape_urls([url])[0]
         if not text.strip():
+            logger.warning(f"⚠️ Empty content at {url}, skipping.")
             continue
 
         Xf = vect.transform([text])
+        if Xf.nnz == 0:
+            logger.warning(f"⚠️ TF-IDF vector is all zeros for {url}, skipping.")
+            continue
+
         score = score_sample(model, Xf)
-        pred = "Crisis" if score >= threshold else "Non-Crisis"
+        logger.info(f"[Prediction] {url} → Score = {score:.6f}, Threshold = {threshold:.6f}")
+
+        classifier = getattr(model, "__class__", type(model)).__name__.lower()
+        if "deep" in classifier:
+            # Deep One Class: Lower (more negative) = Crisis
+            pred = "Crisis" if score <= threshold else "Non-Crisis"
+        else:
+            # SVM: Higher (more positive) = Crisis
+            pred = "Crisis" if score >= threshold else "Non-Crisis"
+
 
         db.add(CollectionItem(
             collection_id=cid,
@@ -328,6 +384,7 @@ async def predict_collection(
 
     db.commit()
     return {"added": added}
+
 
 @app.get("/collections/{cid}")
 def get_collection(
@@ -348,3 +405,24 @@ def get_collection(
         "model_id": coll.model_id,  
         "items": items,
     }
+
+@app.delete("/collections/{cid}", status_code=204)
+def delete_collection(
+    cid: int,
+    current=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    collection = db.query(Collection).filter_by(id=cid, user_id=current.id).first()
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    try:
+        # Delete collection items first
+        db.query(CollectionItem).filter_by(collection_id=cid).delete()
+        db.delete(collection)
+        db.commit()
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete collection: {e}")
+
+    return {"detail": "Collection deleted"}

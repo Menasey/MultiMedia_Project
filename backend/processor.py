@@ -1,56 +1,23 @@
 # ===============================================================
-# backend/processor.py   —  feature & ML utilities (2025‑04‑23)
+# backend/processor.py   —  feature & ML utilities
 # ===============================================================
-"""
-All computationally heavy helpers used by main.py live here.
-
-Public API (imported by main.py):
-    extract_urls(zip_path)                    ➜  [str]
-    scrape_urls(list[str])                    ➜  [str]
-    build_features_and_vect(texts)            ➜  Xf, vect, top_terms
-    train_one_class_model(classifier, X)      ➜  model, train_scores
-    compute_threshold(scores, keep=0.95)      ➜  float
-    score_sample(model, Xrow)                 ➜  float  (normality; higher=normal)
-    get_model(name="svm")                     ➜  sklearn.Predictor
-
-The two score helpers **always** follow the convention:
-    higher score  ⇒  *more in‑distribution / normal*
-so that main.py can apply a single comparison `score >= threshold`.
-"""
 
 from __future__ import annotations
-
-import os
-import zipfile
-import re
-import shutil
+import os, zipfile, re, shutil
 from typing import List, Tuple
 
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
 
-# ── scikit‑learn & friends ──────────────────────────────────────────────────
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import TruncatedSVD
-from sklearn.preprocessing import Normalizer
-from sklearn.pipeline import make_pipeline
 from sklearn.svm import OneClassSVM
-from sklearn.ensemble import IsolationForest
 
-# EIF (pure‑python extended isolation forest)
-from eif import iForest as ExtendedIsolationForest
-
-# Deep One‑Class variant (keras/torch) lives in same package
 from .deep_one_class import DeepOneClassClassifier
 
-
-# ===========================================================================
-#  Basic IO helpers  (unchanged from original)
-# ===========================================================================
+# ========================== IO HELPERS ==========================
 
 def extract_urls(zip_path: str, extract_dir: str = "temp_urls") -> List[str]:
-    """Unzip *zip_path*, read each contained file line‑by‑line, return all URLs."""
     if os.path.isdir(extract_dir):
         shutil.rmtree(extract_dir, ignore_errors=True)
     os.makedirs(extract_dir, exist_ok=True)
@@ -58,7 +25,7 @@ def extract_urls(zip_path: str, extract_dir: str = "temp_urls") -> List[str]:
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
 
-    urls: List[str] = []
+    urls = []
     for fname in os.listdir(extract_dir):
         path = os.path.join(extract_dir, fname)
         if os.path.isfile(path):
@@ -66,10 +33,7 @@ def extract_urls(zip_path: str, extract_dir: str = "temp_urls") -> List[str]:
                 urls.extend([line.strip() for line in fh if line.strip()])
     return urls
 
-
 def scrape_urls(urls: List[str], timeout: int = 10) -> List[str]:
-    """Best‑effort HTML → plaintext scrape (returns empty string on failure)."""
-
     def _scrape_one(u: str) -> str:
         try:
             resp = requests.get(u, timeout=timeout)
@@ -78,26 +42,17 @@ def scrape_urls(urls: List[str], timeout: int = 10) -> List[str]:
             return re.sub(r"\s+", " ", text)
         except Exception:
             return ""
-
     return [_scrape_one(u) for u in urls]
 
-# ===========================================================================
-#  TF‑IDF helpers
-# ===========================================================================
+# ====================== TF-IDF + FEATURES =======================
 
 def get_top_terms_by_tfidf(X, vectorizer: TfidfVectorizer, n_terms: int = 300):
-    """Select *n_terms* highest‑mean TF‑IDF features for dimensionality control."""
     means = np.asarray(X.mean(axis=0)).ravel()
     terms = vectorizer.get_feature_names_out()
     idx   = means.argsort()[::-1][:n_terms]
     return [terms[i] for i in idx]
 
-# ---------------------------------------------------------------------------
-#  Feature pipeline builder
-# ---------------------------------------------------------------------------
-
 def build_features_and_vect(texts):
-    """Builds TF-IDF features and returns feature matrix, vectorizer, and top terms."""
     vectorizer = TfidfVectorizer(
         max_features=5000,
         stop_words="english",
@@ -105,104 +60,49 @@ def build_features_and_vect(texts):
     )
     X = vectorizer.fit_transform(texts)
     top_terms = vectorizer.get_feature_names_out()
-    return X, vectorizer, top_terms 
+    return X, vectorizer, top_terms
 
-# ===========================================================================
-#  One‑class model factory  &  training wrapper
-# ===========================================================================
+# ====================== MODEL TRAINING ==========================
 
-def get_model(model_type: str = "svm"):
-    if model_type == "svm":
-        return OneClassSVM(kernel="rbf", gamma="auto", nu=0.1)
-    raise ValueError(f"Unknown model: {model_type}")
-
-
-def train_one_class_model(classifier: str, Xf) -> Tuple[object, np.ndarray]:
-    """Fit the requested *classifier* on feature matrix *Xf*.
-    Returns ``model`` and the array of training *normality* scores (higher = normal).
-    """
+def train_one_class_model(classifier: str, Xf, **kwargs) -> Tuple[object, np.ndarray]:
     classifier = classifier.lower()
 
-    # Deep One‑Class (auto‑encoder‑style)
     if classifier == "deep_one_class":
         X_dense = Xf.toarray() if hasattr(Xf, "toarray") else Xf
         model = DeepOneClassClassifier(
             input_dim=X_dense.shape[1],
-            latent_dim=32,
-            epochs=50,
-            batch_size=16,
+            latent_dim=kwargs.get("latent_dim", 32),
+            epochs=kwargs.get("epochs", 50),
+            batch_size=kwargs.get("batch_size", 16),
         )
         model.fit(X_dense)
         scores = model.decision_function(X_dense)
         return model, scores
 
-    # Extended Isolation Forest
-    if classifier == "eif":
-        X_dense = Xf.toarray() if hasattr(Xf, "toarray") else Xf
-        sample_size = min(128, X_dense.shape[0])
-        model = ExtendedIsolationForest(
-            X_dense, ntrees=300, sample_size=sample_size, ExtensionLevel=1,
-        )
-        if hasattr(model, "anomaly_score"):
-            scores = -model.anomaly_score(X_dense)
-        elif hasattr(model, "compute_scores"):
-            scores = -model.compute_scores(X_dense)
-        else:
-            paths = model.compute_paths(X_dense)
-            scores = -_paths_to_score(paths, X_dense.shape[0])
-        return model, scores
-
-
-    # Plain Isolation Forest
-    if classifier == "iforest":
-        model = IsolationForest(
-            n_estimators=400,
-            contamination=0.1,
-            random_state=42,
-        ).fit(Xf)
-        scores = model.score_samples(Xf)      # higher≈normal
-        return model, scores
-
-    # Default: One‑Class SVM
-    model = get_model(classifier)
+    # One-Class SVM (default)
+    nu = kwargs.get("nu", 0.1)
+    gamma = kwargs.get("gamma", 'auto')
+    model = OneClassSVM(kernel="rbf", gamma=gamma, nu=nu)
     model.fit(Xf)
     scores = model.decision_function(Xf)
     return model, scores
 
-# ---------------------------------------------------------------------------
-#  Score helpers (shared with main.py)
-# ---------------------------------------------------------------------------
+# ===================== THRESHOLD + SCORING ======================
 
-def compute_threshold(scores: np.ndarray, keep: float = 0.9) -> float:
-    """Return score cut‑off that keeps *keep* fraction of *highest* scores."""
-    return float(np.quantile(scores, 1.0 - keep))
-
-
-# −− internal util for EIF paths → anomaly −−
-_EULER = 0.5772156649
-
-def _paths_to_score(paths: np.ndarray, n_samples: int) -> np.ndarray:
-    c_n = 2 * (np.log(n_samples - 1) + _EULER) - 2 * (n_samples - 1) / n_samples
-    return 2 ** (-paths / c_n)                       # higher=anomalous
+def compute_threshold(scores: np.ndarray, alpha: float = 0.5) -> float:
+    mean = np.mean(scores)
+    std = np.std(scores)
+    if std < 1e-8:
+        std = 1e-8  # prevent threshold = mean
+    return float(mean - alpha * std)
 
 
 def score_sample(model, X_sample):
-    """Score a single sample."""
     try:
         return model.decision_function(X_sample)[0]
     except AttributeError:
         try:
             return model.score_samples(X_sample)[0]
         except AttributeError:
-            try:
-                if hasattr(X_sample, "toarray"):     
-                    X_sample = X_sample.toarray()
+            raise ValueError("Unsupported model type for scoring")
 
-                paths = model.compute_paths(X_sample)
-                n_samples = X_sample.shape[0]
-                euler_constant = 0.5772156649
-                c_n = 2 * (np.log(n_samples - 1) + euler_constant) - (2 * (n_samples - 1) / n_samples)
-                anomaly_scores = 2 ** (-paths / c_n)
-                return -anomaly_scores[0]
-            except Exception as e:
-                raise ValueError(f"Unsupported model type for scoring: {e}")
